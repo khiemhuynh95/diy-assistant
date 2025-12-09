@@ -1,0 +1,5 @@
+{
+  "name": "DIY Visionary Assistant",
+  "description": "An end-to-end DIY home decoration assistant that generates interactive step-by-step manuals with visualizations based on your current space and inspiration photos.",
+  "requestFramePermissions": []
+}

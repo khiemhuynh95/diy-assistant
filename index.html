@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DIY Visionary Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+      /* Custom scrollbar for cleaner UI */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f1f1f1; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; 
+      }
+      
+      @media print {
+        @page {
+          margin: 0.5cm;
+          size: auto;
+        }
+        
+        .no-print {
+          display: none !important;
+        }
+
+        /* Critical fixes for printing SPA content */
+        html, body, #root {
+          height: auto !important;
+          overflow: visible !important;
+          background: white !important;
+          color: black !important;
+          width: 100% !important;
+        }
+
+        .min-h-screen {
+          min-height: 0 !important;
+        }
+
+        /* Expand containers to full width */
+        .max-w-4xl, .max-w-2xl, .max-w-3xl, .max-w-5xl {
+          max-width: none !important;
+          width: 100% !important;
+          margin: 0 !important;
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+        }
+
+        /* Ensure background colors print (for difficulty badges etc) */
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+
+        /* Page break management */
+        h1, h2, h3 {
+          page-break-after: avoid;
+        }
+        
+        section, .break-inside-avoid {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+
+        img {
+          break-inside: avoid;
+          max-width: 100% !important;
+        }
+
+        /* Hide interactive elements that don't make sense in print */
+        button, input[type="file"], input[type="text"] {
+          display: none !important;
+        }
+        /* Except keep checkboxes for the checklist feel, but maybe read-only style */
+        input[type="checkbox"] {
+          display: inline-block !important;
+        }
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-slate-50 text-slate-900 antialiased">
+    <div id="root"></div>
+  </body>
+</html>
