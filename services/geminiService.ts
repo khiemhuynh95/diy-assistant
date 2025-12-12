@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type, Schema, Modality } from "@google/genai";
 import { DIYPlan } from "../types";
 
 // Initialize Gemini Client
@@ -167,7 +167,8 @@ const parseBase64 = (base64String: string) => {
 export const generateStepImage = async (
   prompt: string, 
   referenceImageBase64?: string,
-  options: GenerateStepImageOptions = {}
+  options: GenerateStepImageOptions = {},
+  previousContext: string = ""
 ): Promise<string> => {
   const parts: any[] = [];
   
@@ -190,6 +191,10 @@ export const generateStepImage = async (
       ? `CAMERA ANGLE: Re-imagine the scene from a ${options.cameraAngle} perspective (only if strictly necessary to visualize the step, otherwise prefer original angle).`
       : `PRESERVE GEOMETRY: Keep the EXACT same camera angle, perspective, and room dimensions as the original image.`;
     
+    const contextInstruction = previousContext 
+      ? `PREVIOUS CONTEXT: The input image represents the room after these previous steps: "${previousContext}". You must MAINTAIN these previous modifications unless this specific step explicitly requires changing them.`
+      : "";
+
     parts.push({ 
       text: `Edit this specific room image to visualize the following DIY step: "${prompt}".
       
@@ -198,7 +203,8 @@ export const generateStepImage = async (
       2. STYLE FIDELITY: Strictly apply the colors, materials, and textures described in the prompt.
       3. ${angleInstruction}
       4. ${lightingInstruction}
-      5. REALISM: The output must be a photorealistic interior design progress shot.
+      5. ${contextInstruction}
+      6. REALISM: The output must be a photorealistic interior design progress shot.
       ` 
     });
   } else {
@@ -361,3 +367,79 @@ export const generateRoomTourVideo = async (
   const blob = await response.blob();
   return URL.createObjectURL(blob);
 };
+
+// Helper for Audio Decoding
+const base64ToArrayBuffer = (base64: string) => {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/**
+ * Generates an audio summary of the project plan using Gemini TTS.
+ * Returns the raw ArrayBuffer of the audio.
+ */
+export const generateProjectSummaryAudio = async (plan: DIYPlan): Promise<ArrayBuffer> => {
+   // Generate Script
+   const text = `Here is your DIY Plan for: ${plan.projectTitle}. 
+   This project involves ${plan.steps.length} key steps.
+   ${plan.steps.map(s => `Step ${s.stepNumber}: ${s.title}. Essential note: ${s.instruction}.`).join(' ')}
+   Congratulations on completing your transformation!`;
+
+   const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text: text }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Fenrir' }, // Deep voice for narration
+        },
+      },
+    },
+  });
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!base64Audio) throw new Error("No audio generated");
+
+  return base64ToArrayBuffer(base64Audio);
+};
+
+/**
+ * Generates a specific night-time tour video.
+ */
+export const generateNightTourVideo = async (imageBase64: string): Promise<string> => {
+    // New instance for key check
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const { cleanData } = parseBase64(imageBase64);
+    
+    let operation = await ai.models.generateVideos({
+    model: 'veo-3.1-fast-generate-preview',
+    prompt: 'Cinematic slow pan from left to right. Ultra-wide angle lens (14mm) capturing the entire room. The room is beautifully furnished with cozy living furniture including plush sofas and armchairs. Warm night lighting with ambient lamps. Relaxing, high-end interior design video. Photorealistic, 4k.',
+    image: {
+        imageBytes: cleanData,
+        mimeType: 'image/jpeg',
+    },
+    config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: '16:9'
+    }
+    });
+
+    while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        operation = await ai.operations.getVideosOperation({operation: operation});
+    }
+
+    const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!videoUri) throw new Error("Video generation failed");
+
+    const response = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+}

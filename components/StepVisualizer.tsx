@@ -9,6 +9,7 @@ interface StepVisualizerProps {
   isGenerating: boolean;
   onGenerate: (imageUrl: string) => void;
   existingImage?: string; // If the parent already has an image for this step
+  previousContext?: string; // Text description of previous steps for context
 }
 
 export const StepVisualizer: React.FC<StepVisualizerProps> = ({ 
@@ -17,7 +18,8 @@ export const StepVisualizer: React.FC<StepVisualizerProps> = ({
   isLocked, 
   isGenerating,
   onGenerate,
-  existingImage
+  existingImage,
+  previousContext = ""
 }) => {
   const [internalLoading, setInternalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,8 @@ export const StepVisualizer: React.FC<StepVisualizerProps> = ({
       const url = await generateStepImage(
         step.visualizationPrompt, 
         base64Context, 
-        { lighting, cameraAngle }
+        { lighting, cameraAngle },
+        previousContext
       );
       onGenerate(url);
     } catch (err) {

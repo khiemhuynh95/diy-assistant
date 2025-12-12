@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { fileToGenerativePart, generateDIYPlan, generateProductImage, generateRoomTourVideo, generateStepImage, generateVariantImage } from './services/geminiService';
+import { fileToGenerativePart, generateDIYPlan, generateProductImage, generateRoomTourVideo, generateStepImage, generateProjectSummaryAudio, generateNightTourVideo } from './services/geminiService';
 import { AppState, DIYPlan, ImageInput, Material, Step } from './types';
 import { FileUpload } from './components/FileUpload';
 import { StepVisualizer } from './components/StepVisualizer';
+import { SummaryPlayer } from './components/SummaryPlayer';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.INPUT);
@@ -21,7 +22,6 @@ const App: React.FC = () => {
   const [generatingStepIndex, setGeneratingStepIndex] = useState<number | null>(null);
 
   // Store completed substeps
-  // key = "stepIndex-substepIndex", value = boolean
   const [completedSubsteps, setCompletedSubsteps] = useState<Record<string, boolean>>({});
 
   // Subtask Editing State
@@ -33,16 +33,52 @@ const App: React.FC = () => {
   const [materialImages, setMaterialImages] = useState<Record<string, string>>({}); // Cache
   const [generatingMaterialImage, setGeneratingMaterialImage] = useState(false);
 
-  // Video Generation State
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [isVideoLoading, setIsVideoLoading] = useState(false);
+  // Summary Audio State
+  const [summaryAudioBuffer, setSummaryAudioBuffer] = useState<ArrayBuffer | null>(null);
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [showSummaryPlayer, setShowSummaryPlayer] = useState(false);
 
-  // Final Variants State
-  const [variants, setVariants] = useState<Record<string, string>>({});
-  const [isVariantsLoading, setIsVariantsLoading] = useState(false);
+  // Night Tour Video State
+  const [nightVideoUrl, setNightVideoUrl] = useState<string | null>(null);
+  const [isNightVideoLoading, setIsNightVideoLoading] = useState(false);
 
   // PDF Loading State
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+
+  // Prefill Images on Mount
+  useEffect(() => {
+    const preloadImages = async () => {
+      const loadImg = async (path: string): Promise<ImageInput | null> => {
+        try {
+          const res = await fetch(path);
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          const file = new File([blob], path, { type: blob.type });
+          const base64 = await fileToGenerativePart(file);
+          return {
+            file,
+            previewUrl: URL.createObjectURL(file),
+            base64
+          };
+        } catch (e) {
+          console.warn(`Failed to preload ${path}`, e);
+          return null;
+        }
+      };
+
+      if (!currentImage) {
+        const origin = await loadImg('origin.jpeg');
+        if (origin) setCurrentImage(origin);
+      }
+
+      if (!inspirationImage) {
+        const inspired = await loadImg('inspired.jpeg');
+        if (inspired) setInspirationImage(inspired);
+      }
+    };
+
+    preloadImages();
+  }, []);
 
   const isFinalStepVisualized = () => {
     if (!plan) return false;
@@ -56,18 +92,14 @@ const App: React.FC = () => {
     
     // Prevent overlapping operations
     if (generatingStepIndex !== null) return;
-    if (isVideoLoading || videoUrl) return;
-
+    
     // Find the next step that needs visualization
     const nextStep = plan.steps.find(step => !stepVisuals[step.stepNumber]);
 
     if (nextStep) {
       generateVisualForStep(nextStep);
-    } else if (isFinalStepVisualized() && Object.keys(variants).length === 0 && !isVariantsLoading) {
-      // If all steps done, generate variants
-      handleGenerateVariants();
     }
-  }, [appState, plan, stepVisuals, generatingStepIndex, isVideoLoading, videoUrl, variants, isVariantsLoading]);
+  }, [appState, plan, stepVisuals, generatingStepIndex]);
 
   const generateVisualForStep = async (step: Step) => {
     setGeneratingStepIndex(step.stepNumber);
@@ -81,55 +113,62 @@ const App: React.FC = () => {
         }
       }
 
+      // Collect previous step instructions to inform the model about the current state
+      const previousSteps = plan?.steps.filter(s => s.stepNumber < step.stepNumber) || [];
+      const previousContext = previousSteps.length > 0 
+        ? previousSteps.map(s => s.instruction).join(". ") 
+        : "";
+
       // Generate
-      const url = await generateStepImage(step.visualizationPrompt, contextBase64);
+      const url = await generateStepImage(step.visualizationPrompt, contextBase64, {}, previousContext);
       handleStepVisualGenerated(step.stepNumber, url);
     } catch (e) {
       console.error(`Auto-generation failed for step ${step.stepNumber}`, e);
-      // In case of error, we pause auto-gen for this step (leaving it null in visuals)
-      // The user can manually retry using the button in StepVisualizer
     } finally {
       setGeneratingStepIndex(null);
     }
   };
 
-  const handleGenerateVariants = async () => {
-    if (!plan) return;
-    setIsVariantsLoading(true);
+  const handleGenerateSummary = async () => {
+      if (!plan) return;
+      setIsSummaryLoading(true);
+      try {
+          const buffer = await generateProjectSummaryAudio(plan);
+          setSummaryAudioBuffer(buffer);
+          setShowSummaryPlayer(true);
+      } catch (e) {
+          console.error("Summary gen failed", e);
+          alert("Failed to generate audio summary.");
+      } finally {
+          setIsSummaryLoading(false);
+      }
+  };
+
+  const handleGenerateNightTour = async () => {
+    if (!plan || isNightVideoLoading || nightVideoUrl) return;
+
     const lastStepIdx = plan.steps[plan.steps.length - 1].stepNumber;
-    const finalImage = stepVisuals[lastStepIdx];
-    const style = plan.styleAnalysis;
+    const bestImage = stepVisuals[lastStepIdx];
+    if (!bestImage) return;
+
+    setIsNightVideoLoading(true);
+    try {
+      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+      if (!hasKey) {
+        await (window as any).aistudio.openSelectKey();
+      }
+    } catch (e) {
+      console.warn("API Key selection flow issue:", e);
+    }
 
     try {
-        const variantConfigs = [
-            { name: "Golden Hour Glow", angle: "Match Reference", lighting: "Golden Hour, warm sunlight streaming in, cozy atmosphere" },
-            { name: "Evening Ambience", angle: "Match Reference", lighting: "Night time, interior artificial lights on, cozy and intimate" },
-            { name: "Wide Perspective", angle: "Wide Angle", lighting: "Bright natural daylight" }
-        ];
-
-        // Generate in parallel
-        const promises = variantConfigs.map(async (conf) => {
-            try {
-                const url = await generateVariantImage(finalImage, conf.angle, conf.lighting, style);
-                return { name: conf.name, url };
-            } catch (e) {
-                console.error("Variant failed", conf.name, e);
-                return null;
-            }
-        });
-
-        const results = await Promise.all(promises);
-        const newVariants: Record<string, string> = {};
-        results.forEach(res => {
-            if (res) newVariants[res.name] = res.url;
-        });
-        
-        setVariants(newVariants);
-
-    } catch(e) {
-        console.error("Variant generation error", e);
+      const url = await generateNightTourVideo(bestImage);
+      setNightVideoUrl(url);
+    } catch (e) {
+      console.error(e);
+      alert("Video generation failed");
     } finally {
-        setIsVariantsLoading(false);
+      setIsNightVideoLoading(false);
     }
   };
 
@@ -157,11 +196,11 @@ const App: React.FC = () => {
 
     setAppState(AppState.ANALYZING);
     setErrorMsg("");
-    setStepVisuals({}); // Reset visuals on new plan
-    setCompletedSubsteps({}); // Reset progress
-    setMaterialImages({}); // Reset material image cache
-    setVideoUrl(null); // Reset video
-    setVariants({});
+    setStepVisuals({}); 
+    setCompletedSubsteps({}); 
+    setMaterialImages({}); 
+    setSummaryAudioBuffer(null);
+    setNightVideoUrl(null);
     setGeneratingStepIndex(null);
 
     try {
@@ -183,7 +222,6 @@ const App: React.FC = () => {
   const handleStepVisualGenerated = (index: number, imageUrl: string) => {
     setStepVisuals(prev => {
       const newState = { ...prev, [index]: imageUrl };
-      // If we regenerate an earlier step, we must clear subsequent steps to maintain consistency
       Object.keys(prev).forEach(key => {
         const keyNum = parseInt(key);
         if (keyNum > index) {
@@ -192,8 +230,9 @@ const App: React.FC = () => {
       });
       return newState;
     });
-    // Invalidate variants whenever a visual changes
-    setVariants({});
+    // Invalidate outputs that depend on final state
+    setNightVideoUrl(null);
+    setSummaryAudioBuffer(null);
   };
 
   const toggleSubstep = (stepIndex: number, subIdx: number) => {
@@ -241,7 +280,7 @@ const App: React.FC = () => {
     newPlan.steps[sIdx].substeps[newIndex] = temp;
     setPlan(newPlan);
     
-    // Swap completion state as well to follow the item
+    // Swap completion state
     const currentKey = `${sIdx}-${subIdx}`;
     const newKey = `${sIdx}-${newIndex}`;
     setCompletedSubsteps(prev => {
@@ -260,7 +299,6 @@ const App: React.FC = () => {
     newPlan.steps[sIdx].substeps.push("New step");
     setPlan(newPlan);
     
-    // Automatically enter edit mode for the new step
     const newSubIdx = newPlan.steps[sIdx].substeps.length - 1;
     setEditingSubstep({ sIdx, subIdx: newSubIdx });
     setEditValue("New step");
@@ -270,11 +308,7 @@ const App: React.FC = () => {
 
   const handleMaterialClick = async (item: Material) => {
     setSelectedMaterial(item);
-    
-    // Check cache first
-    if (materialImages[item.name]) {
-      return; 
-    }
+    if (materialImages[item.name]) return; 
 
     setGeneratingMaterialImage(true);
     try {
@@ -292,51 +326,11 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGenerateVideo = async () => {
-    if (!plan || isVideoLoading || videoUrl) return;
-
-    // Double check constraint: Must have last step visualization
-    const lastStepIdx = plan.steps[plan.steps.length - 1].stepNumber;
-    if (!stepVisuals[lastStepIdx]) {
-      alert("Please generate visualizations for all steps before creating the 3D tour.");
-      return;
-    }
-
-    setIsVideoLoading(true);
-
-    try {
-      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-      if (!hasKey) {
-        await (window as any).aistudio.openSelectKey();
-      }
-    } catch (e) {
-      console.warn("API Key selection flow issue:", e);
-    }
-
-    try {
-      const bestImage = stepVisuals[lastStepIdx];
-      if (!bestImage) {
-        throw new Error("Final room visualization is missing.");
-      }
-      const url = await generateRoomTourVideo(plan.styleAnalysis, bestImage);
-      setVideoUrl(url);
-
-    } catch (e) {
-      console.error(e);
-      if (appState === AppState.RESULT) { 
-         // Could set an error state for the video section
-      }
-    } finally {
-      setIsVideoLoading(false);
-    }
-  };
-
   const handleDownloadPDF = () => {
     setIsPdfGenerating(true);
     const element = document.getElementById('diy-plan-content');
     if (!element) return;
     
-    // Using html2pdf from CDN
     const html2pdf = (window as any).html2pdf;
     if (!html2pdf) {
         alert("PDF generator not loaded yet.");
@@ -372,12 +366,11 @@ const App: React.FC = () => {
     setStepVisuals({});
     setCompletedSubsteps({});
     setMaterialImages({});
-    setVideoUrl(null);
+    setSummaryAudioBuffer(null);
+    setNightVideoUrl(null);
     setSelectedMaterial(null);
     setGeneratingStepIndex(null);
-    setIsVideoLoading(false);
-    setVariants({});
-    setIsVariantsLoading(false);
+    setIsNightVideoLoading(false);
   };
 
   const handlePrint = () => {
@@ -784,6 +777,7 @@ const App: React.FC = () => {
                     isGenerating={generatingStepIndex === step.stepNumber}
                     onGenerate={(url) => handleStepVisualGenerated(step.stepNumber, url)}
                     existingImage={stepVisuals[step.stepNumber]}
+                    previousContext={plan.steps.slice(0, idx).map(s => s.instruction).join(". ")}
                   />
                 </div>
               </div>
@@ -791,67 +785,103 @@ const App: React.FC = () => {
           ))}
         </section>
 
-        {/* Final Reveal & Variants */}
+        {/* Project Completion Dashboard */}
         {isFinalStepVisualized() && plan && (
             <section className="bg-slate-900 text-white rounded-2xl p-8 mb-12 overflow-hidden relative break-inside-avoid">
-                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   Your Future Space
-                </h2>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Main Result */}
-                    <div>
-                        <h3 className="text-sm font-semibold uppercase tracking-wider text-indigo-400 mb-3">Final Result</h3>
-                        <div className="rounded-xl overflow-hidden shadow-2xl border border-slate-700">
-                          <img 
-                            src={stepVisuals[plan.steps[plan.steps.length - 1].stepNumber]} 
-                            className="w-full h-auto object-cover" 
-                            alt="Final Result"
-                          />
-                        </div>
-                    </div>
+                <div className="absolute top-0 right-0 p-32 bg-indigo-600/20 blur-3xl rounded-full pointer-events-none -mr-16 -mt-16"></div>
+                <div className="absolute bottom-0 left-0 p-32 bg-purple-600/20 blur-3xl rounded-full pointer-events-none -ml-16 -mb-16"></div>
 
-                    {/* Variants */}
-                    <div>
-                        <h3 className="text-sm font-semibold uppercase tracking-wider text-indigo-400 mb-3">Lighting & Angle Previews</h3>
-                        {isVariantsLoading && Object.keys(variants).length === 0 ? (
-                            <div className="h-64 flex items-center justify-center bg-white/5 rounded-xl border border-white/10">
-                                <div className="flex flex-col items-center">
-                                  <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-                                  <span className="text-sm text-slate-400">Rendering environmental variations...</span>
+                <div className="relative z-10">
+                    <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                       </svg>
+                       Project Transformation Complete
+                    </h2>
+                    <p className="text-slate-400 mb-8 max-w-2xl">
+                        Your DIY plan has been fully visualized. Review the transformation summary or generate a cinematic night tour of your new space.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Action 1: Summary Audio Slideshow */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-colors flex flex-col items-start">
+                            <div className="w-12 h-12 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center mb-4">
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                               </svg>
+                            </div>
+                            <h3 className="text-lg font-bold mb-2">Instructions Summary</h3>
+                            <p className="text-sm text-slate-400 mb-6 flex-1">
+                                Listen to an AI-narrated summary of your project plan while watching the transformation unfold step-by-step.
+                            </p>
+                            <button 
+                                onClick={handleGenerateSummary}
+                                disabled={isSummaryLoading}
+                                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                            >
+                                {isSummaryLoading ? (
+                                    <>
+                                       <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                       Generating Audio...
+                                    </>
+                                ) : (
+                                    <>
+                                       Play Summary
+                                    </>
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Action 2: Night Tour Video */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-colors flex flex-col items-start">
+                            <div className="w-12 h-12 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center mb-4">
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                               </svg>
+                            </div>
+                            <h3 className="text-lg font-bold mb-2">Cinematic Night Tour</h3>
+                            <p className="text-sm text-slate-400 mb-6 flex-1">
+                                Generate a photorealistic 4K video tour of the final result with cozy night lighting and camera movement.
+                            </p>
+                            
+                            {nightVideoUrl ? (
+                                <div className="w-full rounded-lg overflow-hidden border border-purple-500/30">
+                                   <video src={nightVideoUrl} controls autoPlay muted className="w-full" />
                                 </div>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-2 gap-4">
-                                {Object.entries(variants).map(([name, url]) => (
-                                    <div key={name} className="group relative rounded-lg overflow-hidden cursor-pointer transition-transform hover:scale-[1.02] border border-slate-700 hover:border-indigo-500">
-                                        <img src={url} alt={name} className="w-full h-32 object-cover" />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent flex items-end p-2 opacity-100">
-                                            <span className="text-xs font-medium text-white">{name}</span>
-                                        </div>
-                                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                           <a href={url} download={`variant-${name}.png`} className="bg-black/50 hover:bg-black/70 p-1.5 rounded-full text-white inline-block">
-                                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                              </svg>
-                                           </a>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        <p className="text-xs text-slate-500 mt-4">
-                          These variations help you visualize the room under different conditions while maintaining the generated style.
-                        </p>
+                            ) : (
+                                <button 
+                                    onClick={handleGenerateNightTour}
+                                    disabled={isNightVideoLoading}
+                                    className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                                >
+                                    {isNightVideoLoading ? (
+                                        <>
+                                           <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                           Rendering Video...
+                                        </>
+                                    ) : (
+                                        <>
+                                           Generate Video
+                                        </>
+                                    )}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </section>
         )}
         
       </main>
+
+      {/* Summary Player Modal */}
+      <SummaryPlayer 
+         isOpen={showSummaryPlayer}
+         onClose={() => setShowSummaryPlayer(false)}
+         images={Object.values(stepVisuals)}
+         audioBuffer={summaryAudioBuffer}
+      />
 
       {/* Material Modal */}
       {selectedMaterial && (
