@@ -28,7 +28,8 @@ export const generateDIYPlan = async (
   inspirationBase64: string,
   currentBase64: string,
   dimensions: string,
-  styleAdjustments: string
+  styleAdjustments: string,
+  budgetPreference: string
 ): Promise<DIYPlan> => {
   
   const materialSchema: Schema = {
@@ -94,6 +95,10 @@ export const generateDIYPlan = async (
     I have a 'Current State' image showing my room right now.
     ${dimensions ? `The dimensions of the area are: ${dimensions}.` : ''}
     ${styleAdjustments ? `CRITICAL STYLE ADJUSTMENT requested by user: "${styleAdjustments}". You MUST modify the plan and the visual style to incorporate this adjustment, instead of blindly following the inspiration image.` : ''}
+    ${budgetPreference ? `BUDGET PREFERENCE: The user has specified a budget of: "${budgetPreference}".
+      - Attempt to select materials, brands, and DIY methods that fit within this range.
+      - CRITICAL: If the specified budget is IMPOSSIBLE or completely unrealistic to achieve the visual result shown in the inspiration image (e.g. asking for marble floors for $10), you must IGNORE the budget constraint. Instead, provide the most cost-effective "Best Value" option that still achieves the visual fidelity.
+      - If you override the budget, explicitly state that the requested budget was insufficient for the scope in the 'description' field.` : 'Default to a "Best Value" budget strategy, balancing cost and quality.'}
 
     Create a comprehensive, step-by-step DIY manual to transform the 'Current State' into the 'Inspiration' style (modified by any user adjustments).
     

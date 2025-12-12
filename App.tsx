@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [currentImage, setCurrentImage] = useState<ImageInput | null>(null);
   const [dimensions, setDimensions] = useState<string>("");
   const [styleAdjustments, setStyleAdjustments] = useState<string>("");
+  const [budgetPreference, setBudgetPreference] = useState<string>("");
   const [plan, setPlan] = useState<DIYPlan | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
   
@@ -208,7 +209,8 @@ const App: React.FC = () => {
         inspirationImage.base64,
         currentImage.base64,
         dimensions,
-        styleAdjustments
+        styleAdjustments,
+        budgetPreference
       );
       setPlan(generatedPlan);
       setAppState(AppState.RESULT);
@@ -363,6 +365,7 @@ const App: React.FC = () => {
     setCurrentImage(null);
     setDimensions("");
     setStyleAdjustments("");
+    setBudgetPreference("");
     setStepVisuals({});
     setCompletedSubsteps({});
     setMaterialImages({});
@@ -416,30 +419,45 @@ const App: React.FC = () => {
               />
             </div>
 
-            <div className="grid md:grid-cols-2 gap-8 mb-8">
+            <div className="grid md:grid-cols-3 gap-6 mb-8">
                <div className="w-full">
                   <label className="block text-sm font-semibold text-slate-700 mb-1">
-                    Room Dimensions (Optional)
+                    Room Dimensions
                   </label>
                   <input 
                     type="text" 
-                    placeholder="e.g. 12x14 feet, 3m high ceiling"
+                    placeholder="e.g. 12x14 feet"
                     value={dimensions}
                     onChange={(e) => setDimensions(e.target.value)}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
+                  <span className="text-xs text-slate-400">Optional</span>
                </div>
                <div className="w-full">
                   <label className="block text-sm font-semibold text-slate-700 mb-1">
-                    Custom Style Adjustments (Optional)
+                    Style Adjustments
                   </label>
                   <input 
                     type="text" 
-                    placeholder="e.g. Make it more minimalist, use blue instead of green"
+                    placeholder="e.g. Minimalist, Blue accents"
                     value={styleAdjustments}
                     onChange={(e) => setStyleAdjustments(e.target.value)}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
+                  <span className="text-xs text-slate-400">Optional</span>
+               </div>
+               <div className="w-full">
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">
+                    Budget Preference
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. $500, Low Cost, Luxury"
+                    value={budgetPreference}
+                    onChange={(e) => setBudgetPreference(e.target.value)}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                  <span className="text-xs text-slate-400">Optional</span>
                </div>
             </div>
 
