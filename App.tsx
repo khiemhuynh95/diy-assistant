@@ -98,7 +98,12 @@ const App: React.FC = () => {
     const nextStep = plan.steps.find(step => !stepVisuals[step.stepNumber]);
 
     if (nextStep) {
-      generateVisualForStep(nextStep);
+      // Throttle requests: Add a delay before starting the next generation to avoid 429 quota errors.
+      const timer = setTimeout(() => {
+        generateVisualForStep(nextStep);
+      }, 3000); // 3 second delay between steps
+      
+      return () => clearTimeout(timer);
     }
   }, [appState, plan, stepVisuals, generatingStepIndex]);
 
@@ -125,6 +130,8 @@ const App: React.FC = () => {
       handleStepVisualGenerated(step.stepNumber, url);
     } catch (e) {
       console.error(`Auto-generation failed for step ${step.stepNumber}`, e);
+      // If it fails, we might want to retry or stop. 
+      // For now, it will stop auto-generating this path because stepVisuals won't be updated.
     } finally {
       setGeneratingStepIndex(null);
     }
@@ -153,6 +160,7 @@ const App: React.FC = () => {
     if (!bestImage) return;
 
     setIsNightVideoLoading(true);
+    // Ensure Key is present for Veo
     try {
       const hasKey = await (window as any).aistudio.hasSelectedApiKey();
       if (!hasKey) {
@@ -193,6 +201,16 @@ const App: React.FC = () => {
     if (!inspirationImage || !currentImage) {
       alert("Please upload both images.");
       return;
+    }
+
+    // Critical: Ensure API Key is selected before starting heavy operations
+    try {
+      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+      if (!hasKey) {
+          await (window as any).aistudio.openSelectKey();
+      }
+    } catch (e) {
+      console.warn("API Key check warning:", e);
     }
 
     setAppState(AppState.ANALYZING);
@@ -478,6 +496,8 @@ const App: React.FC = () => {
     );
   }
 
+  // ... (rest of render logic remains same)
+  
   if (appState === AppState.ANALYZING) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">

@@ -5,6 +5,22 @@ import { DIYPlan } from "../types";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
+ * Helper to call an async function with exponential backoff retry logic.
+ */
+const callWithRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+    try {
+        return await fn();
+    } catch (e: any) {
+        if (retries > 0 && (e.status === 429 || e.code === 429 || e.message?.includes('429'))) {
+             console.warn(`Rate limited, retrying in ${delay}ms... (${retries} retries left)`);
+             await new Promise(resolve => setTimeout(resolve, delay));
+             return callWithRetry(fn, retries - 1, delay * 2);
+        }
+        throw e;
+    }
+}
+
+/**
  * Converts a File object to a Base64 string.
  */
 export const fileToGenerativePart = async (file: File): Promise<string> => {
@@ -118,37 +134,39 @@ export const generateDIYPlan = async (
        - Ensure the lighting and mood described in the prompt matches the Inspiration image (e.g., "warm sunset lighting", "cool clinical brights").
   `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: {
-      parts: [
-        { text: prompt },
-        { 
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: currentBase64
-          }
+  return callWithRetry(async () => {
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview',
+        contents: {
+        parts: [
+            { text: prompt },
+            { 
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: currentBase64
+            }
+            },
+            { 
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: inspirationBase64
+            }
+            }
+        ]
         },
-        { 
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: inspirationBase64
-          }
+        config: {
+        responseMimeType: "application/json",
+        responseSchema: responseSchema,
+        thinkingConfig: { thinkingBudget: 4096 }
         }
-      ]
-    },
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchema,
-      thinkingConfig: { thinkingBudget: 4096 }
+    });
+
+    if (!response.text) {
+        throw new Error("Failed to generate plan");
     }
+
+    return JSON.parse(response.text) as DIYPlan;
   });
-
-  if (!response.text) {
-    throw new Error("Failed to generate plan");
-  }
-
-  return JSON.parse(response.text) as DIYPlan;
 };
 
 export interface GenerateStepImageOptions {
@@ -220,27 +238,29 @@ export const generateStepImage = async (
     parts.push({ text: `${prompt}. High quality, photorealistic, 4k, interior design photography style${lightingText}${angleText}. Ensure the style matches the described inspiration exactly.` });
   }
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: {
-      parts: parts
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "16:9"
-      }
+  return callWithRetry(async () => {
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: {
+        parts: parts
+        },
+        config: {
+        imageConfig: {
+            aspectRatio: "16:9"
+        }
+        }
+    });
+
+    // Extract image
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+        const base64EncodeString = part.inlineData.data;
+        return `data:image/png;base64,${base64EncodeString}`;
+        }
     }
+
+    throw new Error("No image generated");
   });
-
-  // Extract image
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64EncodeString = part.inlineData.data;
-      return `data:image/png;base64,${base64EncodeString}`;
-    }
-  }
-
-  throw new Error("No image generated");
 };
 
 /**
@@ -276,23 +296,25 @@ export const generateVariantImage = async (
     }
   ];
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: { parts },
-    config: {
-      imageConfig: {
-        aspectRatio: "16:9"
-      }
+  return callWithRetry(async () => {
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: { parts },
+        config: {
+        imageConfig: {
+            aspectRatio: "16:9"
+        }
+        }
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+        }
     }
+
+    throw new Error("Variant generation failed");
   });
-
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-  }
-
-  throw new Error("Variant generation failed");
 };
 
 /**
@@ -306,30 +328,32 @@ export const generateProductImage = async (
   Style: ${styleDescription}.
   High quality professional product photography, sharp focus, studio lighting.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: prompt,
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
-      }
+  return callWithRetry(async () => {
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: prompt,
+        config: {
+        imageConfig: {
+            aspectRatio: "1:1"
+        }
+        }
+    });
+
+    // Check for image part
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+        const base64EncodeString = part.inlineData.data;
+        return `data:image/png;base64,${base64EncodeString}`;
+        }
     }
+    
+    const textPart = response.candidates?.[0]?.content?.parts?.find(p => p.text);
+    if (textPart?.text) {
+        console.warn("Gemini Image Generation Refusal/Text:", textPart.text);
+    }
+
+    throw new Error("No image generated");
   });
-
-  // Check for image part
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64EncodeString = part.inlineData.data;
-      return `data:image/png;base64,${base64EncodeString}`;
-    }
-  }
-  
-  const textPart = response.candidates?.[0]?.content?.parts?.find(p => p.text);
-  if (textPart?.text) {
-      console.warn("Gemini Image Generation Refusal/Text:", textPart.text);
-  }
-
-  throw new Error("No image generated");
 };
 
 /**
